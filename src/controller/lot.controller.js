@@ -138,13 +138,20 @@ const getAllData = async (req, res) => {
       }
     }
 
+    if (status) {
+      filter.status = status;
+    } else if (req.query.all !== "true") {
+      // DEFAULT FILTER: faqat faol va muddati o'tmagan lotlar
+      filter.status = "active";
+      filter.endDate = { $gt: new Date() };
+    }
+
     if (name) {
       filter.name = { $regex: name, $options: "i" };
     }
 
     if (province) filter.province = province;
     if (region) filter.region = region;
-    if (status) filter.status = status;
 
     // Admin panel uchun pagination bo'lmasa, hammasini qaytaramiz
     if (!page) {
@@ -192,7 +199,11 @@ const getAllData = async (req, res) => {
 ========================================================= */
 const getLatestLots = async (req, res) => {
   try {
-    const lots = await Lot.find()
+    const now = new Date();
+    const lots = await Lot.find({
+      status: "active",
+      endDate: { $gt: now },
+    })
       .populate("category")
       .populate("lotType")
       .populate("province")

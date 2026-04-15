@@ -19,6 +19,7 @@ const registerUser = async (req, res) => {
       email,
       password,
       role,
+      fullAddress,
     } = req.body;
 
     const existUser = await User.findOne({ email });
@@ -37,6 +38,7 @@ const registerUser = async (req, res) => {
       jshshir,
       passportSeries,
       passportNumber,
+      fullAddress,
       phoneNumber,
       email,
       password: hashedPassword,
@@ -46,7 +48,13 @@ const registerUser = async (req, res) => {
     await newUser.save();
     res.status(201).json({ message: "Foydalanuvchi muvaffaqiyatli ro‘yxatdan o‘tdi ✅" });
   } catch (error) {
-    res.status(500).json({ message: "Serverda xatolik!", error: error.message });
+    console.error("[REGISTER ERROR] Full error:", error);
+    console.error("[REGISTER ERROR] Error name:", error.name);
+    console.error("[REGISTER ERROR] Error message:", error.message);
+    if (error.errors) {
+      console.error("[REGISTER ERROR] Validation errors:", JSON.stringify(error.errors, null, 2));
+    }
+    res.status(500).json({ message: "Serverda xatolik!", error: error.message, details: error.errors });
   }
 };
 

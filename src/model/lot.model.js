@@ -19,7 +19,6 @@ const lotSchema = new mongoose.Schema(
     startPrice: { type: Number, required: true },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
-    location: { type: String, required: true },
     salesVolume: { type: Number, required: true },
     description: { type: String, required: true },
 
@@ -41,6 +40,7 @@ const lotSchema = new mongoose.Schema(
     formTrade: { type: String, required: true },
     firstStep: { type: Number, required: true },
     consultationPrice: { type: Number, required: true },
+    consultingPrice: { type: Number, required: true },
     status: { type: String, enum: ["active", "inactive", "successful", "unsuccessful"], default: "active" },
     views: { type: Number, default: 0 },
   },

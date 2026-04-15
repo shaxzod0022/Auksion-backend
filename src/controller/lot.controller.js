@@ -34,7 +34,6 @@ const createData = async (req, res) => {
       startPrice,
       startDate,
       endDate,
-      location,
       salesVolume,
       description,
       province,
@@ -47,6 +46,7 @@ const createData = async (req, res) => {
       formTrade,
       firstStep,
       consultationPrice,
+      consultingPrice,
       status,
     } = req.body;
 
@@ -78,7 +78,6 @@ const createData = async (req, res) => {
       startPrice: Number(startPrice),
       startDate: new Date(startDate),
       endDate: new Date(endDate),
-      location,
       salesVolume: Number(salesVolume),
       description,
       province,
@@ -91,6 +90,7 @@ const createData = async (req, res) => {
       formTrade,
       firstStep: Number(firstStep),
       consultationPrice: Number(consultationPrice),
+      consultingPrice: Number(consultingPrice),
       status: status || "active",
     });
 
@@ -257,14 +257,14 @@ const updateData = async (req, res) => {
 
     const fieldsToUpdate = [
       "name", "lotNumber", "lotType", "category", "startPrice", 
-      "startDate", "endDate", "location", "salesVolume", "description",
+      "startDate", "endDate", "salesVolume", "description",
       "province", "region", "address", "phone1", "phone2", 
-      "customer", "style", "formTrade", "firstStep", "consultationPrice", "status"
+      "customer", "style", "formTrade", "firstStep", "consultationPrice", "consultingPrice", "status"
     ];
 
     fieldsToUpdate.forEach(field => {
       if (req.body[field] !== undefined) {
-        if (["startPrice", "salesVolume", "firstStep", "consultationPrice"].includes(field)) {
+        if (["startPrice", "salesVolume", "firstStep", "consultationPrice", "consultingPrice"].includes(field)) {
           lot[field] = Number(req.body[field]);
         } else if (["startDate", "endDate"].includes(field)) {
           lot[field] = new Date(req.body[field]);

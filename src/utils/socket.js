@@ -30,7 +30,7 @@ const initSocket = (server) => {
             lotId: lot._id,
             slug: slug,
             currentPrice: lot.startPrice,
-            phase: "waiting", // 'waiting', 'prep', 'bidding', 'ended'
+            phase: "waiting", // 'waiting', 'prep', 'bidding', 'finished_waiting', 'ended'
             prepTime: 300, // 5 minutes
             turnTime: 180, // 3 minutes
             timeLeft: 0,
@@ -39,7 +39,8 @@ const initSocket = (server) => {
             participants: [],
             bids: [],
             aliases: {}, // socketId -> alias (e.g. "1-ishtirokchi")
-            aliasCounter: 0
+            aliasCounter: 0,
+            protocolId: null, // Protocol created during finished_waiting
           };
         }
 
@@ -60,8 +61,11 @@ const initSocket = (server) => {
           currentPrice: state.currentPrice,
           phase: state.phase,
           timeLeft: state.timeLeft,
+          protocolId: state.protocolId,
           lastBidder: state.lastBidder ? {
-            userName: isAdmin ? state.lastBidder.userName : state.lastBidder.alias
+            userId: state.lastBidder.userId,
+            userName: isAdmin ? state.lastBidder.userName : state.lastBidder.alias,
+            alias: state.lastBidder.alias
           } : null,
           bids: state.bids.map(b => ({
             ...b,
@@ -74,6 +78,7 @@ const initSocket = (server) => {
       }
     });
 
+    // Admin boshlash tugmasini bosganda — prep fazaga o'tish
     socket.on("admin_start_auction", ({ slug }) => {
       const room = `auction_${slug}`;
       const state = auctionStates[room];
@@ -85,6 +90,7 @@ const initSocket = (server) => {
       startPrepTimer(io, room);
     });
 
+    // Ishtirokchi qadam bosishi
     socket.on("place_bid", async ({ slug, userId, userName }) => {
       const room = `auction_${slug}`;
       const state = auctionStates[room];
@@ -113,19 +119,12 @@ const initSocket = (server) => {
 
         state.lastBidder = bidInfo;
         state.bids.push(bidInfo);
-        state.timeLeft = 180; // Reset turn timer
+        state.timeLeft = state.turnTime; // Reset turn timer to 3 minutes
 
-        // Broadcast to Admins (with real names)
-        const adminSockets = await io.in(room).fetchSockets();
-        adminSockets.forEach(s => {
-          // If we had a way to check if this specific socket is admin...
-          // For now, let's keep it simple and broadcast sanitized to everyone except if they have an admin flag
-        });
-
-        // Simplified: Broadcast to all, frontend will handle what to show based on token
+        // Broadcast to all
         io.to(room).emit("new_bid", {
           currentPrice: state.currentPrice,
-          lastBidder: state.lastBidder, // Contains both, frontend will filter
+          lastBidder: state.lastBidder,
           bids: state.bids,
           timeLeft: state.timeLeft,
           stepAmount
@@ -136,9 +135,21 @@ const initSocket = (server) => {
       }
     });
 
+    // Admin auksionni tasdiqlash va yakunlash
     socket.on("admin_end_auction", ({ slug }) => {
        const room = `auction_${slug}`;
-       endAuction(io, room, "Admin tomonidan yakunlandi");
+       const state = auctionStates[room];
+       if (!state) return;
+
+       // Admin bidding yoki finished_waiting fazada yakunlashi mumkin
+       if (state.phase === "bidding") {
+         // Admin savdo jarayonida to'xtatmoqchi — avval timer to'xtatamiz, keyin yakunlaymiz
+         if (state.timer) clearInterval(state.timer);
+         finalizeAuction(io, room, "Admin tomonidan yakunlandi");
+       } else if (state.phase === "finished_waiting") {
+         // Timer tugagan, admin tasdiqlayapti — rasman yakunlash
+         finalizeAuction(io, room, "Admin tomonidan tasdiqlandi");
+       }
     });
 
     socket.on("disconnect", () => {
@@ -147,6 +158,7 @@ const initSocket = (server) => {
   });
 };
 
+// 5 daqiqa tayyorgarlik timeri
 const startPrepTimer = (io, room) => {
   const state = auctionStates[room];
   if (state.timer) clearInterval(state.timer);
@@ -157,14 +169,16 @@ const startPrepTimer = (io, room) => {
 
     if (state.timeLeft <= 0) {
       clearInterval(state.timer);
+      // Tayyorgarlik tugadi — savdo boshlanadi
       state.phase = "bidding";
-      state.timeLeft = 180;
+      state.timeLeft = state.turnTime; // 3 daqiqa
       io.to(room).emit("phase_change", { phase: "bidding", timeLeft: state.timeLeft });
       startTurnTimer(io, room);
     }
   }, 1000);
 };
 
+// Har bir qadam uchun 3 daqiqa timer  
 const startTurnTimer = (io, room) => {
   const state = auctionStates[room];
   if (state.timer) clearInterval(state.timer);
@@ -175,50 +189,97 @@ const startTurnTimer = (io, room) => {
 
     if (state.timeLeft <= 0) {
       clearInterval(state.timer);
-      endAuction(io, room, "Vaqt tugadi");
+      // Timer tugadi — AUKSION AVTOMATIK YAKUNLANMAYDI!
+      // O'rniga finished_waiting fazaga o'tadi va admin tasdiqlashini kutadi
+      moveToFinishedWaiting(io, room);
     }
   }, 1000);
 };
 
-const endAuction = async (io, room, reason) => {
+// Timer tugaganda — admin kutish fazasiga o'tish va bayonnoma tayyorlash
+const moveToFinishedWaiting = async (io, room) => {
+  const state = auctionStates[room];
+  if (!state || state.phase === "ended" || state.phase === "finished_waiting") return;
+
+  state.phase = "finished_waiting";
+  state.timeLeft = 0;
+
+  let protocolId = null;
+
+  // Agar g'olib bo'lsa — bayonnomani avtomatik tayyorlaymiz
+  if (state.lastBidder) {
+    try {
+      const protocolNumber = `PR-${Date.now()}`;
+      const newProtocol = new Protocol({
+        lot: state.lotId,
+        winner: state.lastBidder.userId,
+        protocolNumber,
+        status: "active"
+      });
+      await newProtocol.save();
+      state.protocolId = newProtocol._id;
+      protocolId = newProtocol._id;
+    } catch (e) {
+      console.error("Protocol creation error:", e);
+    }
+  }
+
+  io.to(room).emit("phase_change", { 
+    phase: "finished_waiting", 
+    timeLeft: 0,
+    lastBidder: state.lastBidder,
+    protocolId: protocolId,
+    currentPrice: state.currentPrice
+  });
+};
+
+// Admin tasdiqlash — auksionni rasman yakunlash
+const finalizeAuction = async (io, room, reason) => {
   const state = auctionStates[room];
   if (!state || state.phase === "ended") return;
 
   if (state.timer) clearInterval(state.timer);
   state.phase = "ended";
 
-  let winnerProtocol = null;
+  let protocolId = state.protocolId;
 
   if (state.lastBidder) {
-     try {
-       const lot = await Lot.findByIdAndUpdate(state.lotId, { status: "successful" });
-       
-       // Create Protocol
-       const protocolNumber = `PR-${Date.now()}`;
-       const newProtocol = new Protocol({
-         lot: state.lotId,
-         winner: state.lastBidder.userId,
-         protocolNumber,
-         status: "active"
-       });
-       await newProtocol.save();
-       winnerProtocol = newProtocol;
+    try {
+      // Lot statusini yangilash
+      await Lot.findByIdAndUpdate(state.lotId, { status: "successful" });
 
-     } catch(e) { console.error("Winner processing error:", e); }
+      // Agar bayonnoma hali yaratilmagan bo'lsa (admin savdo jarayonida to'xtatgan)
+      if (!protocolId) {
+        const protocolNumber = `PR-${Date.now()}`;
+        const newProtocol = new Protocol({
+          lot: state.lotId,
+          winner: state.lastBidder.userId,
+          protocolNumber,
+          status: "active"
+        });
+        await newProtocol.save();
+        protocolId = newProtocol._id;
+        state.protocolId = protocolId;
+      }
+    } catch (e) {
+      console.error("Winner processing error:", e);
+    }
   } else {
-     await Lot.findByIdAndUpdate(state.lotId, { status: "unsuccessful" });
+    // G'olib yo'q
+    await Lot.findByIdAndUpdate(state.lotId, { status: "unsuccessful" });
   }
 
   io.to(room).emit("auction_ended", { 
     winner: state.lastBidder, 
     finalPrice: state.currentPrice,
-    protocolId: winnerProtocol ? winnerProtocol._id : null,
+    protocolId: protocolId,
     reason 
   });
   
+  // 1 soatdan keyin xotiradan tozalash
   setTimeout(() => {
     delete auctionStates[room];
-  }, 3600000); // 1 hour cleanup
+  }, 3600000);
 };
 
 module.exports = initSocket;

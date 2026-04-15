@@ -7,7 +7,7 @@ const QRCode = require("qrcode");
 const createProtocol = async (req, res) => {
   try {
     const { lotId, winnerId } = req.body;
-    
+
     // Create random protocol number
     const protocolNumber = `PR-${Date.now()}`;
 
@@ -15,11 +15,13 @@ const createProtocol = async (req, res) => {
       lot: lotId,
       winner: winnerId,
       protocolNumber,
-      status: "active"
+      status: "active",
     });
-    
+
     await newProtocol.save();
-    res.status(201).json({ message: "Bayonnoma yaratildi", protocol: newProtocol });
+    res
+      .status(201)
+      .json({ message: "Bayonnoma yaratildi", protocol: newProtocol });
   } catch (err) {
     res.status(500).json({ message: "Server xatosi", error: err.message });
   }
@@ -36,7 +38,10 @@ const getProtocols = async (req, res) => {
 
 const getUserProtocols = async (req, res) => {
   try {
-    const protocols = await Protocol.find({ winner: req.user._id, status: "active" }).populate("lot winner");
+    const protocols = await Protocol.find({
+      winner: req.user._id,
+      status: "active",
+    }).populate("lot winner");
     res.status(200).json(protocols);
   } catch (err) {
     res.status(500).json({ message: "Server xatosi", error: err.message });
@@ -47,7 +52,11 @@ const updateProtocolStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const protocol = await Protocol.findByIdAndUpdate(id, { status }, { new: true });
+    const protocol = await Protocol.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true },
+    );
     res.status(200).json({ message: "Status yangilandi", protocol });
   } catch (err) {
     res.status(500).json({ message: "Server xatosi", error: err.message });
@@ -56,68 +65,119 @@ const updateProtocolStatus = async (req, res) => {
 
 const downloadProtocolPDF = async (req, res) => {
   try {
-    const protocol = await Protocol.findById(req.params.id).populate("lot winner");
-    if (!protocol) return res.status(404).json({ message: "Bayonnoma topilmadi" });
+    const protocol = await Protocol.findById(req.params.id).populate(
+      "lot winner",
+    );
+    if (!protocol)
+      return res.status(404).json({ message: "Bayonnoma topilmadi" });
 
-    // Generate QR Code
-    const verifyUrl = `http://localhost:3000/verify-protocol/${protocol._id}`;
+    const lot = protocol.lot;
+    const user = protocol.winner;
+
+    // QR Code generatsiyasi (uai.uz kabi markazlashgan saytga yo'naltirilgan)
+    const verifyUrl = `https://www.uainf-auksion.uz/verify-protocol/${protocol._id}`;
     const qrImage = await QRCode.toDataURL(verifyUrl);
 
-    const doc = new PDFDocument({ margin: 50 });
-    
-    res.setHeader('Content-disposition', `attachment; filename="protocol_${protocol.protocolNumber}.pdf"`);
-    res.setHeader('Content-type', 'application/pdf');
+    const doc = new PDFDocument({ margin: 40, size: "A4" });
 
+    res.setHeader(
+      "Content-disposition",
+      `attachment; filename="protocol_${protocol.protocolNumber}.pdf"`,
+    );
+    res.setHeader("Content-type", "application/pdf");
     doc.pipe(res);
 
-    // Title Header
-    doc.fillColor("#18436E").fontSize(26).text("ELEKTRON ONLAYN AUKSION", { align: "center" });
-    doc.fontSize(20).text("SAVDO BAYONNOMASI", { align: "center" });
+    // 1. Sarlavha qismi
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .text("ELEKTRON ONLAYN AUKSION INVEST SAVDOLARI NATIJASIGA KO'RA", {
+        align: "center",
+      });
+    doc.text(
+      "uainf-auksion.uz markazlashgan saytida shakllantirilgan g'oliblik BAYONNOMASI",
+      { align: "center" },
+    );
+    doc.moveDown(0.5);
+    doc.text(`№ ${protocol.protocolNumber}`, { align: "center" });
     doc.moveDown(1);
-    
-    // Draw a line
-    doc.moveTo(50, doc.y).lineTo(550, doc.y).strokeColor("#18436E").lineWidth(2).stroke();
+
+    // Ma'lumotlarni chiqarish funksiyasi (PDF dagi kabi ikki ustunli ko'rinish uchun)
+    const writeRow = (label, value) => {
+      const currentY = doc.y;
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(10)
+        .text(label, 40, currentY, { width: 180 });
+      doc.font("Helvetica").text(value || "-", 230, currentY, { width: 320 });
+      doc.moveDown(1);
+    };
+
+    // 2. Asosiy ma'lumotlar bloki [cite: 3, 4, 5, 6, 7]
+    writeRow(
+      "Elektron onlayn-auksion savdosi o'tkazilgan sana:",
+      new Date(protocol.createdAt).toLocaleDateString("uz-UZ"),
+    );
+    writeRow("Lot raqami:", lot.lotNumber);
+    writeRow(
+      "Savdo tashkilotchisi:",
+      '"uainf-auksion" mchj nf uainf-auksion.uz',
+    );
+    writeRow(
+      "Auksion shakli va turi:",
+      "Narxi oshib borish tartibida o'tkaziladigan ochiq elektron onlayn auktsion savdosi. Xususiy buyurtmalar",
+    );
+    writeRow(
+      "Obyektni Elektron onlayn - auktsion savdosiga qo'yish uchun asos:",
+      lot.basisDocument || "Buyurtma asosida",
+    );
+
+    // 3. Mulk tavsifi
+    writeRow("Obyektni tavsiflovchi ma'lumotlar:", lot.description || "-");
+
+    // 4. Narxlar [cite: 9, 10, 25, 26]
+    writeRow(
+      "Onlayn auksion savdosiga qo'yilgan mulkning boshlang'ich bahosi:",
+      `${lot.startPrice?.toLocaleString()} so'm`,
+    );
+    writeRow(
+      "Onlayn auksion savdosiga qo'yilgan mulkning sotilgan bahosi:",
+      `${lot.finalPrice?.toLocaleString()} so'm`,
+    );
+
+    // 5. Ishtirokchilar va G'olib [cite: 11, 12, 14, 31]
+    writeRow(
+      "Onlayn auktsion savdosi ishtirokchilari:",
+      protocol.participantsList,
+    );
+
+    const winnerDetails = `${user.lastName} ${user.firstName} ${user.middleName}, JSHSHIR: ${user.jshshir}, Manzil: ${user.fullAddress?.region}, ${user.fullAddress?.city}, ${user.fullAddress?.street}`;
+    writeRow("Onlayn auktsion savdosi g'olibi:", winnerDetails);
+
     doc.moveDown(2);
 
-    // Protocol Main Info
-    doc.fillColor("black").fontSize(12).font("Helvetica-Bold").text(`Bayonnoma №: `, { continued: true }).font("Helvetica").text(protocol.protocolNumber);
-    doc.font("Helvetica-Bold").text(`Sana: `, { continued: true }).font("Helvetica").text(new Date(protocol.createdAt).toLocaleDateString("uz-UZ"));
+    // 6. Huquqiy eslatma (PQ-5197 sonli qaror)
+    doc.font("Helvetica-Bold").fontSize(9).text("Qo'shimcha ma'lumotlar:", 40);
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .text(
+        "O'zbekiston Respublikasi Prezidentining 2021-yil 24-iyuldagi PQ-5197-sonli qaroriga muvofiq, ushbu bayonnoma mulkni taqiqdan yechish va g'olib nomiga ro'yxatdan o'tkazish uchun asos hisoblanadi.",
+        { align: "justify" },
+      );
     doc.moveDown(2);
 
-    // Winner Info Table-like structure
-    doc.fillColor("#18436E").fontSize(16).font("Helvetica-Bold").text("1. SAVDO G'OLIBI HAQIDA MA'LUMOT");
-    doc.moveDown(0.5);
-    
-    doc.fillColor("black").fontSize(12).font("Helvetica-Bold");
-    const user = protocol.winner;
-    doc.text("F.I.SH: ", { continued: true }).font("Helvetica").text(`${user.lastName} ${user.firstName} ${user.middleName}`);
-    doc.font("Helvetica-Bold").text("JSHSHIR: ", { continued: true }).font("Helvetica").text(user.jshshir);
-    
-    if (user.fullAddress) {
-      doc.font("Helvetica-Bold").text("Manzil: ", { continued: true }).font("Helvetica").text(`${user.fullAddress.region}, ${user.fullAddress.city}, ${user.fullAddress.street}, ${user.fullAddress.houseNumber}-uy`);
-    }
-    doc.font("Helvetica-Bold").text("Telefon: ", { continued: true }).font("Helvetica").text(user.phoneNumber);
-    doc.moveDown(2);
-
-    // Lot Info
-    doc.fillColor("#18436E").fontSize(16).font("Helvetica-Bold").text("2. OBYEKT (LOT) BO'YICHA MA'LUMOT");
-    doc.moveDown(0.5);
-    
-    const lot = protocol.lot;
-    doc.fillColor("black").fontSize(12).font("Helvetica-Bold");
-    doc.text("Lot nomi: ", { continued: true }).font("Helvetica").text(lot.name);
-    doc.font("Helvetica-Bold").text("Lot raqami: ", { continued: true }).font("Helvetica").text(lot.lotNumber);
-    doc.font("Helvetica-Bold").text("Boshlang'ich narx: ", { continued: true }).font("Helvetica").text(`${lot.startPrice?.toLocaleString()} SO'M`);
-    doc.font("Helvetica-Bold").text("Yakuniy narx: ", { continued: true }).font("Helvetica").text(`${lot.startPrice?.toLocaleString()} SO'M`); // In real bidding this would be different
-    doc.moveDown(3);
-
-    // Footer / Footer QR
-    doc.fontSize(10).fillColor("gray").text("Ushbu hujjat elektron shaklda shakllantirilgan. QR-kod orqali uning haqiqiyligini tekshirish mumkin.", { align: "center", italic: true });
-
-    // QR image at the bottom left or right
-    doc.image(qrImage, 450, 650, { fit: [100, 100] });
-    
-    doc.fontSize(10).text("Hujjatni tekshirish uchun QR-kodni skanerlang", 430, 755, { width: 140, align: "center" });
+    // 7. QR Kod va Tekshirish matni [cite: 34, 35]
+    const qrY = doc.y;
+    doc.image(qrImage, 40, qrY, { width: 80 });
+    doc
+      .fontSize(8)
+      .text(
+        "Bayonnomada keltirilgan ma'lumotlar to'g'riligini tekshirish uchun QR-kodni skaner qiling. Hujjat nusxasidagi ma'lumotlarning mutanosibligi uning haqiqiyligini tasdiqlaydi.",
+        130,
+        qrY + 20,
+        { width: 400 },
+      );
 
     doc.end();
   } catch (err) {
@@ -125,4 +185,10 @@ const downloadProtocolPDF = async (req, res) => {
   }
 };
 
-module.exports = { createProtocol, getProtocols, getUserProtocols, updateProtocolStatus, downloadProtocolPDF };
+module.exports = {
+  createProtocol,
+  getProtocols,
+  getUserProtocols,
+  updateProtocolStatus,
+  downloadProtocolPDF,
+};

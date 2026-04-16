@@ -48,6 +48,8 @@ const createData = async (req, res) => {
       consultationPrice,
       consultingPrice,
       status,
+      basisDocument,
+      attributes,
     } = req.body;
 
     if (!name || !lotType || !category) {
@@ -92,6 +94,8 @@ const createData = async (req, res) => {
       consultationPrice: Number(consultationPrice),
       consultingPrice: Number(consultingPrice),
       status: status || "active",
+      basisDocument,
+      attributes: typeof attributes === "string" ? JSON.parse(attributes) : attributes,
     });
 
     const savedData = await newData.save();
@@ -113,7 +117,7 @@ const createData = async (req, res) => {
 ========================================================= */
 const getAllData = async (req, res) => {
   try {
-    const { category, lotType, status, name, province, region, page, limit = 12 } = req.query;
+    const { category, lotType, status, name, lotNumber, province, region, page, limit = 12 } = req.query;
     const filter = {};
 
     if (category) {
@@ -148,6 +152,10 @@ const getAllData = async (req, res) => {
 
     if (name) {
       filter.name = { $regex: name, $options: "i" };
+    }
+
+    if (lotNumber) {
+      filter.lotNumber = { $regex: lotNumber, $options: "i" };
     }
 
     if (province) filter.province = province;
@@ -259,7 +267,8 @@ const updateData = async (req, res) => {
       "name", "lotNumber", "lotType", "category", "startPrice", 
       "startDate", "endDate", "salesVolume", "description",
       "province", "region", "address", "phone1", "phone2", 
-      "customer", "style", "formTrade", "firstStep", "consultationPrice", "consultingPrice", "status"
+      "customer", "style", "formTrade", "firstStep", "consultationPrice", "consultingPrice", "status",
+      "basisDocument", "attributes"
     ];
 
     fieldsToUpdate.forEach(field => {
@@ -268,6 +277,8 @@ const updateData = async (req, res) => {
           lot[field] = Number(req.body[field]);
         } else if (["startDate", "endDate"].includes(field)) {
           lot[field] = new Date(req.body[field]);
+        } else if (field === "attributes") {
+          lot[field] = typeof req.body[field] === "string" ? JSON.parse(req.body[field]) : req.body[field];
         } else {
           lot[field] = req.body[field];
         }

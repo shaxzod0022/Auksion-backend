@@ -39,6 +39,14 @@ const lotSchema = new mongoose.Schema(
     style: { type: String, required: true },
     formTrade: { type: String, required: true },
     firstStep: { type: Number, required: true },
+    basisDocument: { type: String }, // Obyektni auktsion savdosiga qo'yish uchun asos
+    attributes: [
+      {
+        key: { type: String, required: true },
+        value: { type: String, required: true }
+      }
+    ],
+
     consultationPrice: { type: Number, required: true },
     consultingPrice: { type: Number, required: true },
     status: { type: String, enum: ["active", "inactive", "successful", "unsuccessful"], default: "active" },

@@ -38,7 +38,8 @@ const initSocket = (server) => {
             lastBidder: null,
             participants: [],
             bids: [],
-            aliases: {}, // socketId -> alias (e.g. "1-ishtirokchi")
+            userAliases: {}, // userId -> { alias, name }
+            socketToUserId: {}, // socketId -> userId
             aliasCounter: 0,
             protocolId: null, // Protocol created during finished_waiting
           };
@@ -46,14 +47,17 @@ const initSocket = (server) => {
 
         const state = auctionStates[room];
 
-        // Assign alias to user if not already assigned
-        if (!isAdmin && userId && !state.aliases[socket.id]) {
-          state.aliasCounter++;
-          state.aliases[socket.id] = {
-            id: userId,
-            name: userName,
-            alias: `${state.aliasCounter}-ishtirokchi`
-          };
+        // Assign alias to user if not already assigned (based on userId for persistence)
+        if (!isAdmin && userId) {
+          if (!state.userAliases[userId]) {
+            state.aliasCounter++;
+            state.userAliases[userId] = {
+              name: userName,
+              alias: `${state.aliasCounter}-ishtirokchi`
+            };
+          }
+          // Map current socket to this user
+          state.socketToUserId[socket.id] = userId;
         }
 
         // Send Current State
@@ -106,8 +110,9 @@ const initSocket = (server) => {
 
         state.currentPrice += stepAmount;
         
-        // Get user alias
-        const participant = state.aliases[socket.id] || { alias: "Noma'lum" };
+        // Get user alias using the persistent mapping
+        const userIdForSocket = state.socketToUserId[socket.id] || userId;
+        const participant = state.userAliases[userIdForSocket] || { alias: "Noma'lum" };
         
         const bidInfo = {
           userId,
@@ -153,7 +158,13 @@ const initSocket = (server) => {
     });
 
     socket.on("disconnect", () => {
-      // Maybe cleanup alias if needed, but better keep for history
+      // Cleanup current socket mapping
+      const roomKeys = Object.keys(auctionStates);
+      for (const room of roomKeys) {
+        if (auctionStates[room].socketToUserId[socket.id]) {
+          delete auctionStates[room].socketToUserId[socket.id];
+        }
+      }
     });
   });
 };
@@ -210,10 +221,16 @@ const moveToFinishedWaiting = async (io, room) => {
   if (state.lastBidder) {
     try {
       const protocolNumber = `PR-${Date.now()}`;
+      const participantsList = Object.values(state.userAliases)
+        .map(p => p.alias)
+        .join(", ");
+
       const newProtocol = new Protocol({
         lot: state.lotId,
         winner: state.lastBidder.userId,
         protocolNumber,
+        finalPrice: state.currentPrice,
+        participantsList,
         status: "active"
       });
       await newProtocol.save();
@@ -251,10 +268,16 @@ const finalizeAuction = async (io, room, reason) => {
       // Agar bayonnoma hali yaratilmagan bo'lsa (admin savdo jarayonida to'xtatgan)
       if (!protocolId) {
         const protocolNumber = `PR-${Date.now()}`;
+        const participantsList = Object.values(state.userAliases)
+          .map(p => p.alias)
+          .join(", ");
+
         const newProtocol = new Protocol({
           lot: state.lotId,
           winner: state.lastBidder.userId,
           protocolNumber,
+          finalPrice: state.currentPrice,
+          participantsList,
           status: "active"
         });
         await newProtocol.save();

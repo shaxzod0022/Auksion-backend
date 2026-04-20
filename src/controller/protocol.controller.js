@@ -2,6 +2,8 @@ const Protocol = require("../model/protocol.model");
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 const uzNumberToWords = require("../util/uzNumberToWords");
+const fs = require("fs");
+const path = require("path");
 
 const createManualProtocol = async (req, res) => {
   try {
@@ -112,7 +114,7 @@ const updateProtocolStatus = async (req, res) => {
     const protocol = await Protocol.findByIdAndUpdate(
       id,
       { status },
-      { new: true },
+      { returnDocument: "after" },
     );
     res.status(200).json({ message: "Status yangilandi", protocol });
   } catch (err) {
@@ -131,6 +133,13 @@ const downloadProtocolPDF = async (req, res) => {
 
     if (!protocol)
       return res.status(404).json({ message: "Bayonnoma topilmadi" });
+
+    if (!protocol.isManual && (!protocol.lot || !protocol.winner)) {
+      return res.status(400).json({
+        message:
+          "Bayonnoma ma'lumotlari to'liq emas (Lot yoki G'olib o'chirilgan bo'lishi mumkin)",
+      });
+    }
 
     let lotData = {};
     let winnerData = {};
@@ -174,11 +183,15 @@ const downloadProtocolPDF = async (req, res) => {
 
     const doc = new PDFDocument({ margin: 50, size: "A4" });
 
-    // Font paths (Times New Roman equivalents)
-    const fontRegular =
-      "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf";
-    const fontBold =
-      "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf";
+    // Font paths (Bundled in project assets)
+    const fontRegular = path.join(
+      __dirname,
+      "../../assets/fonts/LiberationSerif-Regular.ttf",
+    );
+    const fontBold = path.join(
+      __dirname,
+      "../../assets/fonts/LiberationSerif-Bold.ttf",
+    );
 
     res.setHeader(
       "Content-disposition",
@@ -295,11 +308,14 @@ const downloadProtocolPDF = async (req, res) => {
     );
 
     // 3. Legal Info
-    doc.font(fontBold).fontSize(12).text("Qo'shimcha ma'lumotlar:", 50, doc.y, {
-      lineGap: 1,
-      width: 490,
-      align: "left",
-    });
+    doc
+      .font(fontBold)
+      .fontSize(12)
+      .text("Qo'shimcha ma'lumotlar:", 50, doc.y, {
+        lineGap: 1,
+        width: 490,
+        align: "left",
+      });
     doc
       .font(fontRegular)
       .fontSize(12)

@@ -108,7 +108,7 @@ const getBySlugData = async (req, res) => {
     const news = await News.findOneAndUpdate(
       { slug },
       { $inc: { views: 1 } },
-      { new: true }
+      { returnDocument: "after" }
     );
 
     if (!news) {

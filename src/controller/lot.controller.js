@@ -234,7 +234,7 @@ const getBySlugData = async (req, res) => {
     const lot = await Lot.findOneAndUpdate(
       { slug },
       { $inc: { views: 1 } },
-      { new: true }
+      { returnDocument: "after" }
     )
       .populate("category")
       .populate("lotType")

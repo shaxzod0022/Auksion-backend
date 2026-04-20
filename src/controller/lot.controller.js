@@ -78,8 +78,8 @@ const createData = async (req, res) => {
       lotType,
       category,
       startPrice: Number(startPrice),
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
+      startDate: new Date(startDate.length === 16 ? startDate + "+05:00" : startDate),
+      endDate: new Date(endDate.length === 16 ? endDate + "+05:00" : endDate),
       salesVolume: Number(salesVolume),
       description,
       province,
@@ -276,7 +276,11 @@ const updateData = async (req, res) => {
         if (["startPrice", "salesVolume", "firstStep", "consultationPrice", "consultingPrice"].includes(field)) {
           lot[field] = Number(req.body[field]);
         } else if (["startDate", "endDate"].includes(field)) {
-          lot[field] = new Date(req.body[field]);
+          let dateStr = req.body[field];
+          if (typeof dateStr === "string" && dateStr.length === 16) {
+            dateStr += "+05:00";
+          }
+          lot[field] = new Date(dateStr);
         } else if (field === "attributes") {
           lot[field] = typeof req.body[field] === "string" ? JSON.parse(req.body[field]) : req.body[field];
         } else {

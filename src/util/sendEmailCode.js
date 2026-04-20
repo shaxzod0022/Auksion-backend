@@ -25,7 +25,6 @@ const sendEmailPage = async ({ to, subject, html }) => {
       html,
     });
 
-    console.log("📩 Email yuborildi:", to);
   } catch (error) {
     console.error("❌ Email yuborishda xato:", error.message);
   }

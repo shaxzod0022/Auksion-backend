@@ -2,15 +2,69 @@ const Protocol = require("../model/protocol.model");
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 const uzNumberToWords = require("../util/uzNumberToWords");
-const path = require("path");
+
+const createManualProtocol = async (req, res) => {
+  try {
+    const {
+      protocolNumber: customProtocolNumber,
+      finalPrice,
+      participantsList,
+      status,
+      manualData,
+    } = req.body;
+
+    let protocolNumber = customProtocolNumber;
+    if (!protocolNumber) {
+      // Use timestamp for uniqueness instead of count which can cause conflicts
+      protocolNumber = `UAI-NF-${Date.now()}`;
+    }
+
+    const newProtocol = new Protocol({
+      protocolNumber,
+      finalPrice: Number(finalPrice || manualData?.finalPrice),
+      participantsList,
+      status: status || "active",
+      isManual: true,
+      manualData: {
+        ...manualData,
+        startDate:
+          manualData.startDate && manualData.startDate.length === 16
+            ? new Date(manualData.startDate + "+05:00")
+            : manualData.startDate
+              ? new Date(manualData.startDate)
+              : new Date(),
+      },
+    });
+
+    await newProtocol.save();
+    res.status(201).json({
+      message: "Qo'lda kiritilgan bayonnoma yaratildi",
+      protocol: newProtocol,
+    });
+  } catch (err) {
+    console.error("Protocol Creation Error:", err);
+    res.status(500).json({ message: "Server xatosi", error: err.message });
+  }
+};
 
 const createProtocol = async (req, res) => {
   try {
-    const { lotId, winnerId, finalPrice, participantsList } = req.body;
+    const {
+      lotId,
+      winnerId,
+      finalPrice,
+      participantsList,
+      protocolNumber: customProtocolNumber,
+      status: initialStatus,
+    } = req.body;
 
-    // Create protocol number with UAI NF prefix
-    const count = await Protocol.countDocuments();
-    const protocolNumber = `UAI NF - ${2026031 + count}`;
+    let protocolNumber = customProtocolNumber;
+
+    // Create protocol number with UAI NF prefix if not provided
+    if (!protocolNumber) {
+      const count = await Protocol.countDocuments();
+      protocolNumber = `UAI NF - ${2026031 + count}`;
+    }
 
     const newProtocol = new Protocol({
       lot: lotId,
@@ -18,7 +72,7 @@ const createProtocol = async (req, res) => {
       protocolNumber,
       finalPrice: Number(finalPrice),
       participantsList,
-      status: "active",
+      status: initialStatus || "active",
     });
 
     await newProtocol.save();
@@ -71,24 +125,60 @@ const downloadProtocolPDF = async (req, res) => {
     const protocol = await Protocol.findById(req.params.id)
       .populate({
         path: "lot",
-        populate: ["lotType", "category", "province", "region"]
+        populate: ["lotType", "category", "province", "region"],
       })
       .populate("winner");
 
     if (!protocol)
       return res.status(404).json({ message: "Bayonnoma topilmadi" });
 
-    const lot = protocol.lot;
-    const user = protocol.winner;
+    let lotData = {};
+    let winnerData = {};
+
+    if (protocol.isManual) {
+      lotData = {
+        startDate: protocol.manualData.startDate || new Date(),
+        lotNumber: protocol.manualData.lotNumber,
+        customer: protocol.manualData.organizer,
+        basisDocument: protocol.manualData.basisDocument,
+        description: protocol.manualData.description,
+        attributes: protocol.manualData.attributes,
+        startPrice: Number(protocol.manualData.startPrice || 0),
+      };
+      winnerData = {
+        fullName: protocol.manualData.winnerName,
+        jshshir: protocol.manualData.winnerJshshir,
+        address: protocol.manualData.winnerAddress,
+      };
+    } else {
+      const lot = protocol.lot;
+      const user = protocol.winner;
+      lotData = {
+        startDate: lot.startDate,
+        lotNumber: lot.lotNumber,
+        customer: lot.customer || "“uai” mchj nf – uai.uz",
+        basisDocument: lot.basisDocument || "Buyurtma asosida olingan.",
+        description: lot.description,
+        attributes: lot.attributes || [],
+        startPrice: lot.startPrice,
+      };
+      winnerData = {
+        fullName: `“${user.lastName} ${user.firstName} ${user.middleName}”`,
+        jshshir: user.jshshir,
+        address: `${user.fullAddress?.region}, ${user.fullAddress?.city}, ${user.fullAddress?.street}, ${user.fullAddress?.houseNumber}-uy`,
+      };
+    }
 
     const verifyUrl = `https://www.uainf-auksion.uz/verify-protocol/${protocol._id}`;
     const qrImage = await QRCode.toDataURL(verifyUrl);
 
     const doc = new PDFDocument({ margin: 50, size: "A4" });
 
-    // Font paths
-    const fontRegular = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf";
-    const fontBold = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf";
+    // Font paths (Times New Roman equivalents)
+    const fontRegular =
+      "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf";
+    const fontBold =
+      "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf";
 
     res.setHeader(
       "Content-disposition",
@@ -100,12 +190,17 @@ const downloadProtocolPDF = async (req, res) => {
     // 1. Header Section
     doc
       .font(fontBold)
-      .fontSize(11)
-      .text("ELEKTRON ONLAYN AUKSION SAVDOLARI NATIJASIGA KO'RA", { align: "center" });
-    doc.text("uai.uz markazlashgan saytida shakllantirilgan g'oliblik BAYONNOMASI", { align: "center" });
+      .fontSize(12)
+      .text("ELEKTRON ONLAYN AUKSION SAVDOLARI NATIJASIGA KO'RA", {
+        align: "center",
+      });
+    doc.text(
+      "uai.uz markazlashgan saytida shakllantirilgan g'oliblik BAYONNOMASI",
+      { align: "center" },
+    );
     doc.moveDown(0.5);
     doc.text(`№ ${protocol.protocolNumber}`, { align: "center" });
-    doc.moveDown(1);
+    doc.moveDown(0.8);
 
     // Helper for rows
     const drawRow = (label, value) => {
@@ -114,77 +209,107 @@ const downloadProtocolPDF = async (req, res) => {
       const valueX = 290;
       const currentY = doc.y;
 
-      doc.font(fontBold).fontSize(10).text(label, startX, currentY, { width: labelWidth, lineGap: 5 });
-      const labelHeight = doc.heightOfString(label, { width: labelWidth, lineGap: 5 });
+      doc
+        .font(fontBold)
+        .fontSize(12)
+        .text(label, startX, currentY, { width: labelWidth, lineGap: 1 });
+      const labelHeight = doc.heightOfString(label, {
+        width: labelWidth,
+        lineGap: 1,
+      });
 
-      doc.font(fontRegular).fontSize(10).text(value || "-", valueX, currentY, { width: 250, lineGap: 5 });
-      const valueHeight = doc.heightOfString(value || "-", { width: 250, lineGap: 5 });
+      doc
+        .font(fontRegular)
+        .fontSize(12)
+        .text(value || "-", valueX, currentY, { width: 250, lineGap: 1 });
+      const valueHeight = doc.heightOfString(value || "-", {
+        width: 250,
+        lineGap: 1,
+      });
 
-      doc.moveDown(Math.max(labelHeight, valueHeight) / 10 + 0.5);
+      doc.moveDown(Math.max(labelHeight, valueHeight) / 10 + 0.2);
     };
 
     // 2. Data Rows
     drawRow(
       "Elektron onlayn – auktsion savdosi o'tkazilgan sana",
-      `${new Date(lot.startDate).toLocaleDateString("uz-UZ")} yil.`
+      `${new Date(lotData.startDate).toLocaleDateString("uz-UZ")} yil.`,
     );
-    drawRow("Lot raqami:", lot.lotNumber);
-    drawRow("Savdo tashkilotchisi:", lot.customer || "“uai” mchj nf – uai.uz");
+    drawRow("Lot raqami:", lotData.lotNumber);
+    drawRow("Savdo tashkilotchisi:", lotData.customer);
     drawRow(
       "Auktsion shakli va turi:",
-      "Narxi oshib borish tartibida o'tkaziladigan ochiq elektron onlayn auktsion savdosi. Xususiy buyurtmalar"
+      protocol.isManual
+        ? protocol.manualData.auctionType || "-"
+        : "Narxi oshib borish tartibida o'tkaziladigan ochiq elektron onlayn auktsion savdosi. Xususiy buyurtmalar",
     );
     drawRow(
       "Obyektni Elektron onlayn – auktsion savdosiga qo'yish uchun asos:",
-      lot.basisDocument || "Buyurtma asosida olingan buyurtmasi."
+      lotData.basisDocument,
     );
 
     // Object Details
-    const lotAttributes = lot.attributes || [];
+    const lotAttributes = lotData.attributes || [];
     const carDetails = lotAttributes
-      .map(attr => `${attr.key} – ${attr.value},`)
-      .join("\n");
+      .map((attr) => `${attr.key} – ${attr.value}`)
+      .join(", ");
 
-    drawRow("Obyektni tavsiflovchi ma'lumotlar:", carDetails || lot.description);
-
-    const startPriceWords = uzNumberToWords(lot.startPrice);
     drawRow(
-      "Onlayn auktsion savdosiga qo'yilgan mulkning boshlang'ich bahosi:",
-      `${lot.startPrice?.toLocaleString()} (${startPriceWords}) so'm`
+      "Obyektni tavsiflovchi ma'lumotlar:",
+      carDetails || lotData.description,
     );
 
-    const finalPrice = protocol.finalPrice || lot.startPrice;
+    const startPriceWords = uzNumberToWords(lotData.startPrice);
+    drawRow(
+      "Onlayn auktsion savdosiga qo'yilgan mulkning boshlang'ich bahosi:",
+      `${lotData.startPrice?.toLocaleString()} (${startPriceWords}) so'm`,
+    );
+
+    const finalPrice = protocol.finalPrice || lotData.startPrice;
     const finalPriceWords = uzNumberToWords(finalPrice);
     drawRow(
       "Onlayn auktsion savdosiga qo'yilgan mulkning sotilgan bahosi:",
-      `${finalPrice?.toLocaleString()} (${finalPriceWords}) so'm`
+      `${finalPrice?.toLocaleString()} (${finalPriceWords}) so'm`,
     );
 
     drawRow(
       "Onlayn auktsion savdosi ishtirokchilari:",
-      protocol.participantsList || "-"
+      protocol.participantsList || "-",
     );
 
-    const winnerInfo = [
-      `“${user.lastName} ${user.firstName} ${user.middleName}”`,
-      `JSHSHIR: ${user.jshshir}`,
-      `manzili: ${user.fullAddress?.region}, ${user.fullAddress?.city}, ${user.fullAddress?.street}, ${user.fullAddress?.houseNumber}-uy`
-    ].join("\n");
+    const winnerInfo = protocol.isManual
+      ? [
+          protocol.manualData.winnerName,
+          `JSHSHIR: ${protocol.manualData.winnerJshshir}`,
+          `manzili: ${protocol.manualData.winnerAddress}`,
+        ].join("\n")
+      : [
+          winnerData.fullName,
+          `JSHSHIR: ${winnerData.jshshir}`,
+          `manzili: ${winnerData.address}`,
+        ].join("\n");
 
     drawRow(
-      "Onlayn auktsion savdosi g'olibi:\n(yuridik shaxs nomi, STIR raqami,\njismoniy shaxs FIO, pasport ma'lumotlari)",
-      winnerInfo
+      "Onlayn auktsion savdosi g'olibi:\n(shaxs nomi, JSHSHIR, manzili)",
+      winnerInfo || "-",
     );
-
-    doc.moveDown(2);
 
     // 3. Legal Info
-    doc.font(fontBold).fontSize(9).text("Qo'shimcha ma'lumotlar:", { lineGap: 3 });
-    doc.font(fontRegular).fontSize(9).text(
-      "O'zbekiston Respublikasi Prezidentining 2021 yil 24 iyuldagi Elektron onlayn – auktsion savdolarini o'tkazish tartibini, uning shaffofligini oshirish hamda ishtirokchilar huquqlarining ishonchli himoyasini kafolatlash chora-tadbirlari to'g'risidagi PQ-5197-sonli qarorining 2-bandiga muvofiq ijro hujjatlari bo'yicha avtomototransport vositalarini realizatsiya qilish uchun o'tkazilgan elektron onlayn – auktsion savdolari natijalari haqidagi bayonnoma uni taqiqdan yechish, shuningdek auktsion g'olibi nomiga ro'yxatdan o'tkazish (hisobga qo'yish) uchun asos hisoblanadi.\n" +
-      "Bayonnomada keltirilgan ma'lumotlar to'g'riligini tekshirish uchun mobil telefon yordamida QR-kodni skaner qiling. Hujjat nusxasidagi ma'lumotlarning mutanosibligi uning haqiqiyligini tasdiqlaydi. Aks holda hujjatning nusxasidagi mos bo'lmagan ma'lumotlar soxtalashtirilgan, tahrirlangan deb baholanishi asoslidir.",
-      { align: "justify", lineGap: 2 }
-    );
+    doc.font(fontBold).fontSize(12).text("Qo'shimcha ma'lumotlar:", 50, doc.y, {
+      lineGap: 1,
+      width: 490,
+      align: "left",
+    });
+    doc
+      .font(fontRegular)
+      .fontSize(12)
+      .text(
+        "O'zbekiston Respublikasi Prezidentining 2021 yil 24 iyuldagi Elektron onlayn – auktsion savdolarini o'tkazish tartibini, uning shaffofligini oshirish hamda ishtirokchilar huquqlarining ishonchli himoyasini kafolatlash chora-tadbirlari to'g'risidagi PQ-5197-sonli qarorining 2-bandiga muvofiq ijro hujjatlari bo'yicha avtomototransport vositalarini realizatsiya qilish uchun o'tkazilgan elektron onlayn – auktsion savdolari natijalari haqidagi bayonnoma uni taqiqdan yechish, shuningdek auktsion g'olibi nomiga ro'yxatdan o'tkazish (hisobga qo'yish) uchun asos hisoblanadi.\n" +
+          "Bayonnomada keltirilgan ma'lumotlar to'g'riligini tekshirish uchun mobil telefon yordamida QR-kodni skaner qiling. Hujjat nusxasidagi ma'lumotlarning mutanosibligi uning haqiqiyligini tasdiqlaydi. Aks holda hujjatning nusxasidagi mos bo'lmagan ma'lumotlar soxtalashtirilgan, tahrirlangan deb baholanishi asoslidir.",
+        50,
+        doc.y,
+        { align: "justify", width: 490, lineGap: 1 },
+      );
 
     doc.moveDown(2);
 
@@ -199,10 +324,81 @@ const downloadProtocolPDF = async (req, res) => {
   }
 };
 
+const getProtocolVerify = async (req, res) => {
+  try {
+    const protocol = await Protocol.findById(req.params.id)
+      .populate({
+        path: "lot",
+        populate: ["lotType", "category", "province", "region"],
+      })
+      .populate("winner");
+
+    if (!protocol) {
+      return res.status(404).json({ message: "Bayonnoma topilmadi" });
+    }
+
+    let lotData = {};
+    let winnerData = {};
+
+    if (protocol.isManual) {
+      lotData = {
+        name: protocol.manualData.description || "Auksion obyekti",
+        lotNumber: protocol.manualData.lotNumber,
+        startDate: protocol.manualData.startDate,
+      };
+      winnerData = {
+        name: protocol.manualData.winnerName,
+        jshshir: protocol.manualData.winnerJshshir,
+        address: protocol.manualData.winnerAddress,
+      };
+    } else {
+      const lot = protocol.lot;
+      const user = protocol.winner;
+      lotData = {
+        name: lot.name,
+        lotNumber: lot.lotNumber,
+        startDate: lot.startDate,
+      };
+      winnerData = {
+        name: `${user.lastName} ${user.firstName} ${user.middleName}`,
+        jshshir: user.jshshir,
+        address: `${user.fullAddress?.region}, ${user.fullAddress?.city}`,
+      };
+    }
+
+    res.status(200).json({
+      protocolNumber: protocol.protocolNumber,
+      createdAt: protocol.createdAt,
+      finalPrice: protocol.finalPrice,
+      isManual: protocol.isManual,
+      lotData,
+      winnerData,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server xatosi", error: err.message });
+  }
+};
+
+const deleteProtocol = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const protocol = await Protocol.findByIdAndDelete(id);
+    if (!protocol) {
+      return res.status(404).json({ message: "Bayonnoma topilmadi" });
+    }
+    res.status(200).json({ message: "Bayonnoma muvaffaqiyatli o'chirildi" });
+  } catch (err) {
+    res.status(500).json({ message: "Server xatosi", error: err.message });
+  }
+};
+
 module.exports = {
+  createManualProtocol,
   createProtocol,
   getProtocols,
   getUserProtocols,
   updateProtocolStatus,
   downloadProtocolPDF,
+  deleteProtocol,
+  getProtocolVerify,
 };

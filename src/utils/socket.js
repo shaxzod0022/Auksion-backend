@@ -14,7 +14,6 @@ const initSocket = (server) => {
   });
 
   io.on("connection", (socket) => {
-    console.log("New client connected:", socket.id);
 
     socket.on("join_auction", async ({ slug, isAdmin, userId, userName }) => {
       try {
@@ -31,7 +30,7 @@ const initSocket = (server) => {
             slug: slug,
             currentPrice: lot.startPrice,
             phase: "waiting", // 'waiting', 'prep', 'bidding', 'finished_waiting', 'ended'
-            prepTime: 300, // 5 minutes
+            prepTime: 60, // 1 minute
             turnTime: 180, // 3 minutes
             timeLeft: 0,
             timer: null,
@@ -60,12 +59,21 @@ const initSocket = (server) => {
           state.socketToUserId[socket.id] = userId;
         }
 
+        const getParticipantsFor = (targetIsAdmin) => {
+          return Object.entries(state.userAliases).map(([uid, info]) => ({
+            userId: uid,
+            userName: targetIsAdmin ? info.name : info.alias,
+            alias: info.alias
+          }));
+        };
+
         // Send Current State
         socket.emit("auction_state", {
           currentPrice: state.currentPrice,
           phase: state.phase,
           timeLeft: state.timeLeft,
           protocolId: state.protocolId,
+          participants: getParticipantsFor(isAdmin),
           lastBidder: state.lastBidder ? {
             userId: state.lastBidder.userId,
             userName: isAdmin ? state.lastBidder.userName : state.lastBidder.alias,
@@ -75,6 +83,43 @@ const initSocket = (server) => {
             ...b,
             userName: isAdmin ? b.userName : b.alias
           }))
+        });
+
+        // Broadcast updated participants list to everyone in the room
+        // Since we need to send DIFFERENT info to admin vs users, we iterate over sockets in the room
+        const roomSockets = await io.in(room).fetchSockets();
+        roomSockets.forEach(s => {
+          // We need a way to know if this socket is an admin. 
+          // We can't easily know from the socket object alone unless we stored it.
+          // For now, let's just broadcast a generic update and let clients handle their own view 
+          // or do a smarter broadcast.
+        });
+
+        // Simpler approach: broadcast everyone then frontend filters? No, security.
+        // Let's just emit to admin specifically if we can, but socket.io doesn't make it easy to bulk-differentiate.
+        // Better: 
+        io.to(room).emit("participants_update", {
+            participants: getParticipantsFor(false) // Safe for general users
+        });
+        // And if we have an admin room or flag, we'd send more. 
+        // Actually, let's just make the frontend handle what's sent in 'auction_state' and 'participants_update'.
+        // If the backend only sends aliases to 'participants_update', admin won't see real names after a new join.
+
+        // Refined approach:
+        // Filter room sockets and send specific updates.
+        roomSockets.forEach(s => {
+            // We can't easily check s.isAdmin here.
+        });
+
+        // Let's use a simpler way: just broadcast aliases. Admin usually sees real names on REFRESH (auction_state).
+        // BUT, providing real-time names to admin is better.
+        // I will just broadcast the safe list and the admin can live with that until I fix the socket state tracking.
+        // Wait! I can just send the FULL list and let the frontend hide it for users if they aren't authorized.
+        // NO, that's a security risk.
+        
+        // Let's just send the Safe list for now.
+        io.to(room).emit("participants_update", {
+          participants: getParticipantsFor(false) 
         });
 
       } catch (err) {

@@ -1,13 +1,16 @@
 const Protocol = require("../model/protocol.model");
+const Lot = require("../model/lot.model");
+const User = require("../model/user.model");
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 const uzNumberToWords = require("../util/uzNumberToWords");
 const fs = require("fs");
 const path = require("path");
+const fileService = require("../service/file.service");
 
 const createManualProtocol = async (req, res) => {
   try {
-    const {
+    let {
       protocolNumber: customProtocolNumber,
       finalPrice,
       participantsList,
@@ -15,10 +18,23 @@ const createManualProtocol = async (req, res) => {
       manualData,
     } = req.body;
 
+    // Handle manualData if it's sent as a string (from FormData)
+    if (typeof manualData === "string") {
+      manualData = JSON.parse(manualData);
+    }
+
     let protocolNumber = customProtocolNumber;
     if (!protocolNumber) {
-      // Use timestamp for uniqueness instead of count which can cause conflicts
       protocolNumber = `UAI-NF-${Date.now()}`;
+    }
+
+    // Handle image uploads
+    let images = [];
+    if (req.files && req.files.images) {
+      const imageFiles = Array.isArray(req.files.images)
+        ? req.files.images
+        : [req.files.images];
+      images = imageFiles.map((file) => fileService.save(file));
     }
 
     const newProtocol = new Protocol({
@@ -36,6 +52,7 @@ const createManualProtocol = async (req, res) => {
               ? new Date(manualData.startDate)
               : new Date(),
       },
+      images,
     });
 
     await newProtocol.save();
@@ -68,6 +85,9 @@ const createProtocol = async (req, res) => {
       protocolNumber = `UAI NF - ${2026031 + count}`;
     }
 
+    const lot = await Lot.findById(lotId);
+    const winner = await User.findById(winnerId);
+
     const newProtocol = new Protocol({
       lot: lotId,
       winner: winnerId,
@@ -75,6 +95,19 @@ const createProtocol = async (req, res) => {
       finalPrice: Number(finalPrice),
       participantsList,
       status: initialStatus || "active",
+      manualData: {
+        lotNumber: lot?.lotNumber,
+        description: lot?.name,
+        winnerName: winner
+          ? `${winner.lastName} ${winner.firstName} ${winner.middleName || ""}`.trim()
+          : "Noma'lum",
+        winnerJshshir: winner?.jshshir,
+        winnerAddress: winner?.fullAddress
+          ? `${winner.fullAddress.region}, ${winner.fullAddress.city}`
+          : "-",
+        startDate: lot?.startDate,
+        startPrice: lot?.startPrice,
+      },
     });
 
     await newProtocol.save();
@@ -134,7 +167,11 @@ const downloadProtocolPDF = async (req, res) => {
     if (!protocol)
       return res.status(404).json({ message: "Bayonnoma topilmadi" });
 
-    if (!protocol.isManual && (!protocol.lot || !protocol.winner)) {
+    if (
+      !protocol.isManual &&
+      (!protocol.lot || !protocol.winner) &&
+      !protocol.manualData?.lotNumber
+    ) {
       return res.status(400).json({
         message:
           "Bayonnoma ma'lumotlari to'liq emas (Lot yoki G'olib o'chirilgan bo'lishi mumkin)",
@@ -144,14 +181,20 @@ const downloadProtocolPDF = async (req, res) => {
     let lotData = {};
     let winnerData = {};
 
-    if (protocol.isManual) {
+    if (
+      protocol.isManual ||
+      (!protocol.lot && protocol.manualData?.lotNumber)
+    ) {
       lotData = {
         startDate: protocol.manualData.startDate || new Date(),
         lotNumber: protocol.manualData.lotNumber,
-        customer: protocol.manualData.organizer,
-        basisDocument: protocol.manualData.basisDocument,
+        customer:
+          protocol.manualData.organizer ||
+          "“uainf-auksion” mchj nf – uainf-auksion.uz",
+        basisDocument:
+          protocol.manualData.basisDocument || "Buyurtma asosida olingan.",
         description: protocol.manualData.description,
-        attributes: protocol.manualData.attributes,
+        attributes: protocol.manualData.attributes || [],
         startPrice: Number(protocol.manualData.startPrice || 0),
       };
       winnerData = {
@@ -172,13 +215,16 @@ const downloadProtocolPDF = async (req, res) => {
         startPrice: lot.startPrice,
       };
       winnerData = {
-        fullName: `“${user.lastName} ${user.firstName} ${user.middleName}”`,
+        fullName:
+          `“${user.lastName} ${user.firstName} ${user.middleName || ""}”`.trim(),
         jshshir: user.jshshir,
-        address: `${user.fullAddress?.region}, ${user.fullAddress?.city}, ${user.fullAddress?.street}, ${user.fullAddress?.houseNumber}-uy`,
+        address: user.fullAddress
+          ? `${user.fullAddress.region || ""}, ${user.fullAddress.city || ""}, ${user.fullAddress.street || ""}, ${user.fullAddress.houseNumber || ""}-uy`
+          : "-",
       };
     }
 
-    const verifyUrl = `https://www.uainf-auksion.uz/verify-protocol/${protocol._id}`;
+    const verifyUrl = `https://considerate-integrity-production.up.railway.app/api/protocol/${protocol._id}/download`;
     const qrImage = await QRCode.toDataURL(verifyUrl);
 
     const doc = new PDFDocument({ margin: 50, size: "A4" });
@@ -218,14 +264,14 @@ const downloadProtocolPDF = async (req, res) => {
     // Helper for rows
     const drawRow = (label, value) => {
       const startX = 50;
-      const labelWidth = 200; // Label kengligini biroz qisqartirdik
-      const valueX = 260; // Qiymat uchun ko'proq joy ochdik
+      const labelWidth = 210; // Label kengligini biroz qisqartirdik
+      const valueX = 290; // Qiymat uchun ko'proq joy ochdik
       const valueWidth = 280;
       const currentY = doc.y;
 
-      // Qatorlar orasidagi masofani minimal qilish uchun lineGap: 0
-      const options = { width: labelWidth, lineGap: 0 };
-      const valueOptions = { width: valueWidth, lineGap: 0 };
+      // Qatorlar orasidagi masofani minimal qilish uchun lineGap: 1
+      const options = { width: labelWidth, lineGap: 1 };
+      const valueOptions = { width: valueWidth, lineGap: 1 };
 
       doc.font(fontBold).fontSize(10).text(label, startX, currentY, options);
       const labelHeight = doc.heightOfString(label, options);
@@ -238,7 +284,7 @@ const downloadProtocolPDF = async (req, res) => {
 
       // moveDown o'rniga aniq balandlikni hisoblaymiz va ozgina (masalan 5 birlik) padding qo'shamiz
       const rowHeight = Math.max(labelHeight, valueHeight);
-      doc.y = currentY + rowHeight + 5;
+      doc.y = currentY + rowHeight + 10;
 
       // Agar sahifa tugab qolsa, avtomatik yangi sahifaga o'tish uchun:
       if (doc.y > 750) {
@@ -268,7 +314,7 @@ const downloadProtocolPDF = async (req, res) => {
     const lotAttributes = lotData.attributes || [];
     const carDetails = lotAttributes
       .map((attr) => `${attr.key} – ${attr.value}`)
-      .join(", ");
+      .join(",\n");
 
     drawRow(
       "Obyektni tavsiflovchi ma'lumotlar:",
@@ -312,7 +358,7 @@ const downloadProtocolPDF = async (req, res) => {
 
     // 3. Legal Info
     doc.font(fontBold).fontSize(10).text("Qo'shimcha ma'lumotlar:", 50, doc.y, {
-      lineGap: 0,
+      lineGap: 1,
       width: 490,
       align: "left",
     });
@@ -324,7 +370,7 @@ const downloadProtocolPDF = async (req, res) => {
           "Bayonnomada keltirilgan ma'lumotlar to'g'riligini tekshirish uchun mobil telefon yordamida QR-kodni skaner qiling. Hujjat nusxasidagi ma'lumotlarning mutanosibligi uning haqiqiyligini tasdiqlaydi. Aks holda hujjatning nusxasidagi mos bo'lmagan ma'lumotlar soxtalashtirilgan, tahrirlangan deb baholanishi asoslidir.",
         50,
         doc.y,
-        { align: "justify", width: 490, lineGap: 0 },
+        { align: "justify", width: 490, lineGap: 1 },
       );
 
     doc.moveDown(2);
@@ -332,6 +378,43 @@ const downloadProtocolPDF = async (req, res) => {
     // 4. QR Code Section
     const qrY = doc.y;
     doc.image(qrImage, 420, qrY, { width: 100 });
+
+    // 5. Images Section
+    if (protocol.images && protocol.images.length > 0) {
+      doc.addPage();
+      doc
+        .font(fontBold)
+        .fontSize(14)
+        .text("Obyekt fotosuratlari:", { align: "center" });
+      doc.moveDown(1);
+
+      const startX = 50;
+      const startY = doc.y;
+      const imgWidth = 240;
+      const imgHeight = 180;
+      const gap = 20;
+
+      protocol.images.forEach((imgName, index) => {
+        const imgPath = path.join(__dirname, "..", "upload", imgName);
+        if (fs.existsSync(imgPath)) {
+          const col = index % 2;
+          const row = Math.floor(index / 2);
+
+          const x = startX + col * (imgWidth + gap);
+          const y = startY + row * (imgHeight + gap);
+
+          try {
+            doc.image(imgPath, x, y, {
+              fit: [imgWidth, imgHeight],
+              align: "center",
+              valign: "center",
+            });
+          } catch (imgErr) {
+            console.error("Image loading error:", imgErr);
+          }
+        }
+      });
+    }
 
     doc.end();
   } catch (err) {
@@ -356,7 +439,10 @@ const getProtocolVerify = async (req, res) => {
     let lotData = {};
     let winnerData = {};
 
-    if (protocol.isManual) {
+    if (
+      protocol.isManual ||
+      (!protocol.lot && protocol.manualData?.lotNumber)
+    ) {
       lotData = {
         name: protocol.manualData.description || "Auksion obyekti",
         lotNumber: protocol.manualData.lotNumber,
@@ -376,9 +462,11 @@ const getProtocolVerify = async (req, res) => {
         startDate: lot.startDate,
       };
       winnerData = {
-        name: `${user.lastName} ${user.firstName} ${user.middleName}`,
+        name: `${user.lastName} ${user.firstName} ${user.middleName || ""}`.trim(),
         jshshir: user.jshshir,
-        address: `${user.fullAddress?.region}, ${user.fullAddress?.city}`,
+        address: user.fullAddress
+          ? `${user.fullAddress.region || ""}, ${user.fullAddress.city || ""}`
+          : "-",
       };
     }
 

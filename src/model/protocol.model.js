@@ -23,6 +23,7 @@ const protocolSchema = new mongoose.Schema(
       startDate: Date,
       attributes: [{ key: String, value: String }],
     },
+    images: [{ type: String }],
   },
   { timestamps: true }
 );

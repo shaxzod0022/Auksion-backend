@@ -224,7 +224,7 @@ const downloadProtocolPDF = async (req, res) => {
       };
     }
 
-    const verifyUrl = `http://localhost:8080/api/protocol/${protocol._id}/download`;
+    const verifyUrl = `https://considerate-integrity-production.up.railway.app/api/protocol/${protocol._id}/download`;
     const qrImage = await QRCode.toDataURL(verifyUrl);
 
     const doc = new PDFDocument({ margin: 50, size: "A4" });

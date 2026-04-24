@@ -499,6 +499,67 @@ const getProtocolVerify = async (req, res) => {
   }
 };
 
+const updateProtocol = async (req, res) => {
+  try {
+    const { id } = req.params;
+    let { protocolNumber, finalPrice, participantsList, status, manualData } =
+      req.body;
+
+    // Handle manualData if it's sent as a string (from FormData)
+    if (typeof manualData === "string") {
+      manualData = JSON.parse(manualData);
+    }
+
+    const protocol = await Protocol.findById(id);
+    if (!protocol) {
+      return res.status(404).json({ message: "Bayonnoma topilmadi" });
+    }
+
+    // Handle image uploads if provided
+    let images = protocol.images || [];
+    if (req.files && req.files.images) {
+      const imageFiles = Array.isArray(req.files.images)
+        ? req.files.images
+        : [req.files.images];
+      images = imageFiles.map((file) => fileService.save(file));
+    }
+
+    const updateData = {
+      protocolNumber: protocolNumber || protocol.protocolNumber,
+      finalPrice:
+        finalPrice !== undefined ? Number(finalPrice) : protocol.finalPrice,
+      participantsList:
+        participantsList !== undefined
+          ? participantsList
+          : protocol.participantsList,
+      status: status || protocol.status,
+      images,
+    };
+
+    if (manualData) {
+      updateData.manualData = {
+        ...protocol.manualData.toObject(),
+        ...manualData,
+        startDate: manualData.startDate
+          ? new Date(manualData.startDate)
+          : protocol.manualData.startDate,
+      };
+    }
+
+    const updatedProtocol = await Protocol.findByIdAndUpdate(id, updateData, {
+      new: true,
+    });
+
+    res.status(200).json({
+      message: "Bayonnoma muvaffaqiyatli yangilandi",
+      protocol: updatedProtocol,
+    });
+  } catch (err) {
+    console.error("Protocol Update Error:", err);
+    res.status(500).json({ message: "Server xatosi", error: err.message });
+  }
+};
+
 const deleteProtocol = async (req, res) => {
   try {
     const { id } = req.params;
@@ -518,6 +579,7 @@ module.exports = {
   getProtocols,
   getUserProtocols,
   updateProtocolStatus,
+  updateProtocol,
   downloadProtocolPDF,
   deleteProtocol,
   getProtocolVerify,

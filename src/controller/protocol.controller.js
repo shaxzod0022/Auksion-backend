@@ -224,7 +224,7 @@ const downloadProtocolPDF = async (req, res) => {
       };
     }
 
-    const verifyUrl = `https://considerate-integrity-production.up.railway.app/api/protocol/${protocol._id}/download`;
+    const verifyUrl = `http://localhost:8080/api/protocol/${protocol._id}/download`;
     const qrImage = await QRCode.toDataURL(verifyUrl);
 
     const doc = new PDFDocument({ margin: 50, size: "A4" });
@@ -366,18 +366,34 @@ const downloadProtocolPDF = async (req, res) => {
       .font(fontRegular)
       .fontSize(10)
       .text(
-        "O'zbekiston Respublikasi Prezidentining 2021 yil 24 iyuldagi Elektron onlayn – auktsion savdolarini o'tkazish tartibini, uning shaffofligini oshirish hamda ishtirokchilar huquqlarining ishonchli himoyasini kafolatlash chora-tadbirlari to'g'risidagi PQ-5197-sonli qarorining 2-bandiga muvofiq ijro hujjatlari bo'yicha avtomototransport vositalarini realizatsiya qilish uchun o'tkazilgan elektron onlayn – auktsion savdolari natijalari haqidagi bayonnoma uni taqiqdan yechish, shuningdek auktsion g'olibi nomiga ro'yxatdan o'tkazish (hisobga qo'yish) uchun asos hisoblanadi.\n" +
-          "Bayonnomada keltirilgan ma'lumotlar to'g'riligini tekshirish uchun mobil telefon yordamida QR-kodni skaner qiling. Hujjat nusxasidagi ma'lumotlarning mutanosibligi uning haqiqiyligini tasdiqlaydi. Aks holda hujjatning nusxasidagi mos bo'lmagan ma'lumotlar soxtalashtirilgan, tahrirlangan deb baholanishi asoslidir.",
+        "O'zbekiston Respublikasi Prezidentining 2021 yil 24 iyuldagi Elektron onlayn – auktsion savdolarini o'tkazish tartibini, uning shaffofligini oshirish hamda ishtirokchilar huquqlarining ishonchli himoyasini kafolatlash chora-tadbirlari to'g'risidagi PQ-5197-sonli qarorining 2-bandiga muvofiq ijro hujjatlari bo'yicha avtomototransport vositalarini realizatsiya qilish uchun o'tkazilgan elektron onlayn – auktsion savdolari natijalari haqidagi bayonnoma uni taqiqdan yechish, shuningdek auktsion g'olibi nomiga ro'yxatdan o'tkazish (hisobga qo'yish) uchun asos hisoblanadi.",
         50,
         doc.y,
-        { align: "justify", width: 490, lineGap: 1 },
+        { align: "justify", width: 500, lineGap: 2 },
       );
 
-    doc.moveDown(2);
+    // 4. QR Code Section (Text on left 65%, QR Code on right)
+    const qrSectionY = doc.y;
+    const textWidth = 310; // Taxminan 65% (490 * 0.65)
+    const qrSize = 75;
+    const qrText =
+      "Bayonnomada keltirilgan ma'lumotlar to'g'riligini tekshirish uchun mobil telefon yordamida QR-kodni skaner qiling. Hujjat nusxasidagi ma'lumotlarning mutanosibligi uning haqiqiyligini tasdiqlaydi. Aks holda hujjatning nusxasidagi mos bo'lmagan ma'lumotlar soxtalashtirilgan, tahrirlangan deb baholanishi asoslidir.";
 
-    // 4. QR Code Section
-    const qrY = doc.y;
-    doc.image(qrImage, 420, qrY, { width: 100 });
+    doc.font(fontRegular).fontSize(10).text(qrText, 50, qrSectionY, {
+      align: "justify",
+      width: textWidth,
+      lineGap: 2,
+    });
+
+    // QR kodni o'ng tomonga joylashtirish
+    doc.image(qrImage, 420, qrSectionY, { width: qrSize });
+
+    // Keyingi qismlar matn yoki QR koddan pastda boshlanishi uchun doc.y ni yangilaymiz
+    const textHeight = doc.heightOfString(qrText, {
+      width: textWidth,
+      lineGap: 2,
+    });
+    doc.y = Math.max(qrSectionY + textHeight, qrSectionY + qrSize) + 15;
 
     // 5. Images Section
     if (protocol.images && protocol.images.length > 0) {

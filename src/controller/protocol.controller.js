@@ -334,10 +334,30 @@ const downloadProtocolPDF = async (req, res) => {
       `${finalPrice?.toLocaleString()} (${finalPriceWords}) so'm`,
     );
 
-    drawRow(
-      "Onlayn auktsion savdosi ishtirokchilari:",
-      protocol.participantsList || "-",
-    );
+    let formattedParticipants = "-";
+    if (Array.isArray(protocol.participantsList)) {
+      formattedParticipants = protocol.participantsList.join(",\n");
+    } else if (
+      typeof protocol.participantsList === "string" &&
+      protocol.participantsList.trim()
+    ) {
+      const pList = protocol.participantsList;
+      if (pList.includes(",") || pList.includes("\n")) {
+        formattedParticipants = pList
+          .split(/[,\n]+/)
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .join(",\n");
+      } else {
+        formattedParticipants = pList
+          .split(/\s+/)
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .join(",\n");
+      }
+    }
+
+    drawRow("Onlayn auktsion savdosi ishtirokchilari:", formattedParticipants);
 
     const winnerInfo = protocol.isManual
       ? [

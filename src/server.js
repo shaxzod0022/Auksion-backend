@@ -15,6 +15,8 @@ const provinceRoutes = require("./routes/province.route");
 const regionRoutes = require("./routes/region.route");
 const applicationRoutes = require("./routes/application.route");
 const protocolRoutes = require("./routes/protocol.route");
+const searchRoutes = require("./routes/search.route");
+
 
 const app = express();
 const http = require("http");
@@ -43,6 +45,8 @@ app.use("/api/province", provinceRoutes);
 app.use("/api/region", regionRoutes);
 app.use("/api/application", applicationRoutes);
 app.use("/api/protocol", protocolRoutes);
+app.use("/api/search", searchRoutes);
+
 
 // 🚀 Initialize Socket.io
 initSocket(server);

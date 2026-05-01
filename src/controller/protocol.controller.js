@@ -459,66 +459,6 @@ const downloadProtocolPDF = async (req, res) => {
   }
 };
 
-const getProtocolVerify = async (req, res) => {
-  try {
-    const protocol = await Protocol.findById(req.params.id)
-      .populate({
-        path: "lot",
-        populate: ["lotType", "category", "province", "region"],
-      })
-      .populate("winner");
-
-    if (!protocol) {
-      return res.status(404).json({ message: "Bayonnoma topilmadi" });
-    }
-
-    let lotData = {};
-    let winnerData = {};
-
-    if (
-      protocol.isManual ||
-      (!protocol.lot && protocol.manualData?.lotNumber)
-    ) {
-      lotData = {
-        name: protocol.manualData.description || "Auksion obyekti",
-        lotNumber: protocol.manualData.lotNumber,
-        startDate: protocol.manualData.startDate,
-      };
-      winnerData = {
-        name: protocol.manualData.winnerName,
-        jshshir: protocol.manualData.winnerJshshir,
-        address: protocol.manualData.winnerAddress,
-      };
-    } else {
-      const lot = protocol.lot;
-      const user = protocol.winner;
-      lotData = {
-        name: lot.name,
-        lotNumber: lot.lotNumber,
-        startDate: lot.startDate,
-      };
-      winnerData = {
-        name: `${user.lastName} ${user.firstName} ${user.middleName || ""}`.trim(),
-        jshshir: user.jshshir,
-        address: user.fullAddress
-          ? `${user.fullAddress.region || ""}, ${user.fullAddress.city || ""}`
-          : "-",
-      };
-    }
-
-    res.status(200).json({
-      protocolNumber: protocol.protocolNumber,
-      createdAt: protocol.createdAt,
-      finalPrice: protocol.finalPrice,
-      isManual: protocol.isManual,
-      lotData,
-      winnerData,
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Server xatosi", error: err.message });
-  }
-};
-
 const updateProtocol = async (req, res) => {
   try {
     const { id } = req.params;
@@ -602,5 +542,4 @@ module.exports = {
   updateProtocol,
   downloadProtocolPDF,
   deleteProtocol,
-  getProtocolVerify,
 };
